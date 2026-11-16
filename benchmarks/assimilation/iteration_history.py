@@ -90,13 +90,16 @@ def load_run(run: Path, pool: list[dict]) -> dict:
             candidates += parse_blocks(log)
     candidates += pool
 
-    def fits(b: dict, strict: bool) -> bool:
-        """Does a log block belong to this run (same first loss, and same length if strict)?"""
-        same = abs(b["loss"][0] - hist[0]) <= 2e-4 * abs(hist[0])
-        return same and (not strict or len(b["loss"]) == len(hist))
+    def misfit(b: dict) -> float:
+        """Largest relative difference between a log block and the loss history of this run,
+        over the iterations they share. Runs on the same data with other settings (weight,
+        prior) start from the same loss, so the first value alone does not tell them apart."""
+        m = min(len(b["loss"]), len(hist))
+        return float(np.max(np.abs(b["loss"][:m] - hist[:m]) / np.abs(hist[:m])))
 
-    block = next((b for b in candidates if fits(b, True)), None) \
-        or next((b for b in candidates if fits(b, False)), None)
+    # The log prints the loss to 5 digits. Blocks of the full length first, then the closest.
+    close = [b for b in candidates if misfit(b) <= 2e-4]
+    block = min(close, key=lambda b: (len(b["loss"]) != len(hist), misfit(b)), default=None)
 
     # Gauge term of the loss -> RMS stage residual at the gauge(s), mm.
     obs = np.load(run / "observations.npz")
