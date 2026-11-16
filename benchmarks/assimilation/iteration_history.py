@@ -14,7 +14,8 @@ The exit stage was not written per iteration (``progress.json`` keeps only the l
 the stage panel shows the RMS residual at the gauge(s) per iteration, which the logs do give,
 and the final exit-stage error appears in the fit figure.
 
-Per run group, two figures: ``<group>_iterations.png`` and ``<group>_fit.png``; per case, one
+A group that mixes Manning's n per zone and per cell is split into ``<group>_zones`` and
+``<group>_cells``. Per run group, two figures: ``<group>_iterations.png`` and ``<group>_fit.png``; per case, one
 ``loss_vs_error.png`` over all its runs.
 
 Usage:
@@ -324,6 +325,7 @@ def plot_loss_vs_error(case: str, groups: dict[str, list[dict]], out: Path) -> N
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--cases", type=Path, default=Path("cases"))
+    parser.add_argument("--only", default="", help="only the run groups whose name has this")
     args = parser.parse_args()
 
     layout = {      # case -> (directory of the run groups, shared Slurm logs, output directory)
@@ -340,8 +342,18 @@ def main() -> None:
         for group in sorted(root.iterdir(), key=lambda p: (len(p.name), p.name)):
             dirs = sorted(d for d in group.glob("*") if (d / "observations.npz").exists()
                           and (d / "summary.json").exists()) if group.is_dir() else []
-            if dirs:
-                groups[group.name] = [load_run(d, pool) for d in dirs]
+            if args.only and args.only not in group.name:
+                continue
+            runs = [load_run(d, pool) for d in dirs]
+            # A group that mixes Manning's n per zone and per cell is split in two.
+            modes = sorted({r["summary"].get("fit_manning_mode") or "fixed" for r in runs})
+            if {"zones", "cells"} <= set(modes):
+                for mode in modes:
+                    groups[f"{group.name}_{mode}"] = [
+                        r for r in runs
+                        if (r["summary"].get("fit_manning_mode") or "fixed") == mode]
+            elif runs:
+                groups[group.name] = runs
         out.mkdir(parents=True, exist_ok=True)
         for group, runs in groups.items():
             short = [r for r in runs
@@ -352,7 +364,8 @@ def main() -> None:
                      f"{[r['name'] for r in short]}" if short else ""))
             plot_iterations(f"{case} / {group}", runs, out / f"{group}_iterations.png")
             plot_fit(f"{case} / {group}", runs, out / f"{group}_fit.png")
-        plot_loss_vs_error(case, groups, out / "loss_vs_error.png")
+        if not args.only:
+            plot_loss_vs_error(case, groups, out / "loss_vs_error.png")
         print(f"figures in {out}")
 
 
